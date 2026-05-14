@@ -5,3 +5,4 @@ aiohttp==3.9.1
 python-dotenv==1.0.0
 lxml==4.9.3
 colorama==0.4.6
+openai==1.12.0
