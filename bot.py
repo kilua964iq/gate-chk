@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import urllib3
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command, CommandStart
 from aiogram.types import (
@@ -16,6 +17,8 @@ from config import BOT_TOKEN, ADMIN_IDS
 from scanners.payment_scanner import PaymentScanner
 from utils.reporter import ReportGenerator
 
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
 # ══════════════════════════════════════
 #           إعداد اللوغينق
 # ══════════════════════════════════════
@@ -31,6 +34,7 @@ logger = logging.getLogger(__name__)
 bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
+
 
 # ══════════════════════════════════════
 #           حالات FSM
@@ -104,14 +108,14 @@ async def cmd_start(message: Message, state: FSMContext):
 
     welcome_text = (
         f"👋 أهلاً **{user_name}**!\n\n"
-        f"🤖 أنا بوت فحص أمان بوابات الدفع\n\n"
-        f"🛡️ **ما الذي أفحصه؟**\n"
-        f"  🔒 شهادة SSL وصلاحيتها\n"
-        f"  🛡️ رؤوس الأمان HTTP Headers\n"
-        f"  🔑 المفاتيح المكشوفة (Stripe, PayPal...)\n"
-        f"  💳 أمان نماذج الدفع\n"
-        f"  📊 تقرير شامل مع الحلول\n\n"
-        f"⚡ اضغط الزر أدناه لبدء الفحص!"
+        "🤖 أنا بوت فحص أمان بوابات الدفع\n\n"
+        "🛡️ **ما الذي أفحصه؟**\n"
+        "  🔒 شهادة SSL وصلاحيتها\n"
+        "  🛡️ رؤوس الأمان HTTP Headers\n"
+        "  🔑 المفاتيح المكشوفة (Stripe, PayPal...)\n"
+        "  💳 أمان نماذج الدفع\n"
+        "  📊 تقرير شامل مع الحلول\n\n"
+        "⚡ اضغط الزر أدناه لبدء الفحص!"
     )
 
     await message.answer(
@@ -122,7 +126,7 @@ async def cmd_start(message: Message, state: FSMContext):
 
 
 # ══════════════════════════════════════
-#       /scan (أمر مباشر)
+#       /scan
 # ══════════════════════════════════════
 @dp.message(Command("scan"))
 async def cmd_scan(message: Message, state: FSMContext):
@@ -274,7 +278,7 @@ async def cb_scan_types(callback: CallbackQuery):
 async def process_url(message: Message, state: FSMContext):
     url = message.text.strip()
 
-    # التحقق البسيط من الرابط
+    # التحقق من الرابط
     if len(url) < 4 or " " in url:
         await message.answer(
             "❌ **رابط غير صالح!**\n\n"
@@ -295,4 +299,74 @@ async def process_url(message: Message, state: FSMContext):
         parse_mode="Markdown"
     )
 
-    await state.clear
+    await state.clear()
+
+    try:
+        # تشغيل الفحص في thread منفصل
+        loop = asyncio.get_event_loop()
+        scanner = PaymentScanner(url)
+        results = await loop.run_in_executor(
+            None, scanner.run_full_scan
+        )
+
+        # توليد التقرير
+        reporter = ReportGenerator(results)
+        full_report = reporter.generate_full_report()
+
+        # حذف رسالة الانتظار
+        await wait_msg.delete()
+
+        # إرسال التقرير
+        # تقسيم التقرير إن كان طويلاً
+        if len(full_report) > 4000:
+            parts = [
+                full_report[i:i+4000]
+                for i in range(0, len(full_report), 4000)
+            ]
+            for i, part in enumerate(parts):
+                if i == len(parts) - 1:
+                    await message.answer(
+                        part,
+                        parse_mode="Markdown",
+                        reply_markup=get_after_scan_keyboard()
+                    )
+                else:
+                    await message.answer(part, parse_mode="Markdown")
+        else:
+            await message.answer(
+                full_report,
+                parse_mode="Markdown",
+                reply_markup=get_after_scan_keyboard()
+            )
+
+        # لوغ للأدمن
+        logger.info(
+            f"✅ فحص مكتمل | المستخدم: {message.from_user.id} | "
+            f"الموقع: {url} | الدرجة: {results.get('score', 0)}"
+        )
+
+    except Exception as e:
+        await wait_msg.delete()
+        logger.error(f"❌ خطأ في الفحص: {e}")
+        await message.answer(
+            "❌ **حدث خطأ أثناء الفحص!**\n\n"
+            f"السبب: `{str(e)[:100]}`\n\n"
+            "تأكد من:\n"
+            "  • صحة الرابط\n"
+            "  • أن الموقع يعمل\n"
+            "  • اتصالك بالإنترنت",
+            reply_markup=get_after_scan_keyboard(),
+            parse_mode="Markdown"
+        )
+
+
+# ══════════════════════════════════════
+#       تشغيل البوت
+# ══════════════════════════════════════
+async def main():
+    logger.info("🚀 البوت يعمل...")
+    await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
