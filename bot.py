@@ -13,7 +13,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 
-from config import BOT_TOKEN, ADMIN_IDS, DEVELOPER, OPENAI_API_KEY
+from config import BOT_TOKEN, DEVELOPER, OPENAI_API_KEY
 from scanners.payment_scanner import PaymentScanner
 from utils.reporter import ReportGenerator
 from ai_assistant import ai_assistant
@@ -31,12 +31,18 @@ storage = MemoryStorage()
 dp      = Dispatcher(storage=storage)
 
 
+# ══════════════════════════════════════
+#           حالات FSM
+# ══════════════════════════════════════
 class BotStates(StatesGroup):
     waiting_for_url     = State()
     chatting_with_ai    = State()
     waiting_code_review = State()
 
 
+# ══════════════════════════════════════
+#       دوال مساعدة
+# ══════════════════════════════════════
 def get_copyright_footer() -> str:
     return (
         "\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -96,7 +102,10 @@ def get_main_keyboard() -> InlineKeyboardMarkup:
 
 def get_cancel_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="❌ إلغاء", callback_data="cancel")]
+        [InlineKeyboardButton(
+            text="❌ إلغاء",
+            callback_data="cancel"
+        )]
     ])
 
 
@@ -138,10 +147,36 @@ def get_after_scan_keyboard() -> InlineKeyboardMarkup:
 
 def get_back_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔙 رجوع", callback_data="main_menu")]
+        [InlineKeyboardButton(
+            text="🔙 رجوع",
+            callback_data="main_menu"
+        )]
     ])
 
 
+async def send_long_message(message, text, reply_markup=None):
+    if len(text) > 4000:
+        parts = [text[i:i+4000] for i in range(0, len(text), 4000)]
+        for i, part in enumerate(parts):
+            if i == len(parts) - 1:
+                await message.answer(
+                    part,
+                    parse_mode="Markdown",
+                    reply_markup=reply_markup
+                )
+            else:
+                await message.answer(part, parse_mode="Markdown")
+    else:
+        await message.answer(
+            text,
+            parse_mode="Markdown",
+            reply_markup=reply_markup
+        )
+
+
+# ══════════════════════════════════════
+#       الأوامر الرئيسية
+# ══════════════════════════════════════
 @dp.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext):
     await state.clear()
@@ -163,7 +198,6 @@ async def cmd_start(message: Message, state: FSMContext):
         "⚡ اختر من القائمة أدناه!"
         f"{get_copyright_footer()}"
     )
-
     await message.answer(
         text,
         reply_markup=get_main_keyboard(),
@@ -189,8 +223,7 @@ async def cmd_ai(message: Message, state: FSMContext):
 async def cmd_scan(message: Message, state: FSMContext):
     await state.set_state(BotStates.waiting_for_url)
     await message.answer(
-        "🔍 **أرسل رابط الموقع المراد فحصه:**\n\n"
-        "📌 **أمثلة:**\n"
+        "🔍 **أرسل رابط الموقع:**\n\n"
         "  • `https://example.com`\n"
         "  • `example.com`\n",
         reply_markup=get_cancel_keyboard(),
@@ -210,8 +243,9 @@ async def cmd_help(message: Message):
         reply_markup=get_back_keyboard(),
         parse_mode="Markdown"
     )
-
-
+# ══════════════════════════════════════
+#       معالجة رسائل الذكاء الاصطناعي
+# ══════════════════════════════════════
 @dp.message(BotStates.chatting_with_ai)
 async def process_ai_message(message: Message, state: FSMContext):
     user_id      = message.from_user.id
@@ -221,30 +255,19 @@ async def process_ai_message(message: Message, state: FSMContext):
     try:
         response = await ai_assistant.chat(user_id, user_message)
         await thinking_msg.delete()
-
-        if len(response) > 4000:
-            parts = [response[i:i+4000] for i in range(0, len(response), 4000)]
-            for i, part in enumerate(parts):
-                if i == len(parts) - 1:
-                    await message.answer(
-                        part,
-                        reply_markup=get_ai_keyboard(),
-                        parse_mode="Markdown"
-                    )
-                else:
-                    await message.answer(part, parse_mode="Markdown")
-        else:
-            await message.answer(
-                response,
-                reply_markup=get_ai_keyboard(),
-                parse_mode="Markdown"
-            )
+        await send_long_message(message, response, get_ai_keyboard())
 
     except Exception as e:
         await thinking_msg.delete()
-        await message.answer(f"❌ خطأ: {str(e)[:100]}")
+        await message.answer(
+            f"❌ خطأ: {str(e)[:100]}",
+            reply_markup=get_ai_keyboard()
+        )
 
 
+# ══════════════════════════════════════
+#       مراجعة الكود
+# ══════════════════════════════════════
 @dp.message(BotStates.waiting_code_review)
 async def process_code_review(message: Message, state: FSMContext):
     user_id      = message.from_user.id
@@ -255,30 +278,16 @@ async def process_code_review(message: Message, state: FSMContext):
         response = await ai_assistant.review_code(user_id, code)
         await thinking_msg.delete()
         await state.set_state(BotStates.chatting_with_ai)
-
-        if len(response) > 4000:
-            parts = [response[i:i+4000] for i in range(0, len(response), 4000)]
-            for i, part in enumerate(parts):
-                if i == len(parts) - 1:
-                    await message.answer(
-                        part,
-                        reply_markup=get_ai_keyboard(),
-                        parse_mode="Markdown"
-                    )
-                else:
-                    await message.answer(part, parse_mode="Markdown")
-        else:
-            await message.answer(
-                response,
-                reply_markup=get_ai_keyboard(),
-                parse_mode="Markdown"
-            )
+        await send_long_message(message, response, get_ai_keyboard())
 
     except Exception as e:
         await thinking_msg.delete()
         await message.answer(f"❌ خطأ: {str(e)[:100]}")
 
 
+# ══════════════════════════════════════
+#       فحص الموقع
+# ══════════════════════════════════════
 @dp.message(BotStates.waiting_for_url)
 async def process_url(message: Message, state: FSMContext):
     url = message.text.strip()
@@ -286,7 +295,6 @@ async def process_url(message: Message, state: FSMContext):
     if len(url) < 4 or " " in url:
         await message.answer(
             "❌ رابط غير صالح!\n"
-            "أرسل رابطاً صحيحاً مثل:\n"
             "`https://example.com`",
             parse_mode="Markdown"
         )
@@ -314,30 +322,15 @@ async def process_url(message: Message, state: FSMContext):
         full_report += get_copyright_footer()
 
         await wait_msg.delete()
-
-        # حفظ نتائج الفحص للتحليل بالذكاء
         await state.update_data(last_scan=results)
-
-        if len(full_report) > 4000:
-            parts = [full_report[i:i+4000] for i in range(0, len(full_report), 4000)]
-            for i, part in enumerate(parts):
-                if i == len(parts) - 1:
-                    await message.answer(
-                        part,
-                        parse_mode="Markdown",
-                        reply_markup=get_after_scan_keyboard()
-                    )
-                else:
-                    await message.answer(part, parse_mode="Markdown")
-        else:
-            await message.answer(
-                full_report,
-                parse_mode="Markdown",
-                reply_markup=get_after_scan_keyboard()
-            )
+        await send_long_message(
+            message,
+            full_report,
+            get_after_scan_keyboard()
+        )
 
         logger.info(
-            f"✅ فحص مكتمل | "
+            f"✅ فحص | "
             f"المستخدم: {message.from_user.id} | "
             f"الموقع: {url} | "
             f"الدرجة: {results.get('score', 0)}"
@@ -349,19 +342,21 @@ async def process_url(message: Message, state: FSMContext):
         await message.answer(
             "❌ **حدث خطأ أثناء الفحص!**\n\n"
             f"السبب: `{str(e)[:100]}`\n\n"
-            "تأكد من صحة الرابط وأن الموقع يعمل"
+            "تأكد من صحة الرابط"
             f"{get_copyright_footer()}",
             reply_markup=get_after_scan_keyboard(),
             parse_mode="Markdown"
         )
 
 
+# ══════════════════════════════════════
+#       Callbacks
+# ══════════════════════════════════════
 @dp.callback_query(F.data == "start_scan")
 async def cb_start_scan(callback: CallbackQuery, state: FSMContext):
     await state.set_state(BotStates.waiting_for_url)
     await callback.message.edit_text(
-        "🔍 **أرسل رابط الموقع المراد فحصه:**\n\n"
-        "📌 **أمثلة:**\n"
+        "🔍 **أرسل رابط الموقع:**\n\n"
         "  • `https://example.com`\n"
         "  • `example.com`\n",
         reply_markup=get_cancel_keyboard(),
@@ -423,26 +418,161 @@ async def cb_ai_analyze_scan(callback: CallbackQuery, state: FSMContext):
         await callback.answer("❌ لا يوجد فحص سابق!", show_alert=True)
         return
 
-    thinking_msg = await callback.message.answer("🤖 جاري التحليل بالذكاء الاصطناعي...")
+    thinking_msg = await callback.message.answer(
+        "🤖 جاري التحليل بالذكاء الاصطناعي..."
+    )
 
     try:
         analysis = await ai_assistant.analyze_scan_results(last_scan)
         await thinking_msg.delete()
+        await send_long_message(
+            callback.message,
+            analysis,
+            get_back_keyboard()
+        )
 
-        if len(analysis) > 4000:
-            parts = [analysis[i:i+4000] for i in range(0, len(analysis), 4000)]
-            for i, part in enumerate(parts):
-                if i == len(parts) - 1:
-                    await callback.message.answer(
-                        part,
-                        parse_mode="Markdown",
-                        reply_markup=get_back_keyboard()
-                    )
-                else:
-                    await callback.message.answer(part, parse_mode="Markdown")
-        else:
-            await callback.message.answer(
-                analysis,
-                parse_mode="Markdown",
-                reply_markup=get_back_keyboard()
-            )
+    except Exception as e:
+        await thinking_msg.delete()
+        await callback.message.answer(f"❌ خطأ: {str(e)[:100]}")
+
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "clear_ai_chat")
+async def cb_clear_ai_chat(callback: CallbackQuery):
+    ai_assistant.clear_conversation(callback.from_user.id)
+    await callback.answer("✅ تم مسح المحادثة", show_alert=True)
+
+
+@dp.callback_query(F.data == "main_menu")
+async def cb_main_menu(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.message.edit_text(
+        "🏠 **القائمة الرئيسية**\n\n"
+        "اختر ما تريد:"
+        f"{get_copyright_footer()}",
+        reply_markup=get_main_keyboard(),
+        parse_mode="Markdown"
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "cancel")
+async def cb_cancel(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.message.edit_text(
+        "🏠 **القائمة الرئيسية**\n\n"
+        "اختر ما تريد:"
+        f"{get_copyright_footer()}",
+        reply_markup=get_main_keyboard(),
+        parse_mode="Markdown"
+    )
+    await callback.answer("تم الإلغاء")
+
+
+@dp.callback_query(F.data == "how_it_works")
+async def cb_how_it_works(callback: CallbackQuery):
+    await callback.message.edit_text(
+        "📖 **كيف يعمل البوت؟**\n\n"
+        "1️⃣ **فحص SSL**\n"
+        "   يتحقق من صلاحية الشهادة\n\n"
+        "2️⃣ **Security Headers**\n"
+        "   يفحص 7 رؤوس أمان\n\n"
+        "3️⃣ **المفاتيح المكشوفة**\n"
+        "   يبحث عن مفاتيح Stripe وPayPal\n\n"
+        "4️⃣ **نماذج الدفع**\n"
+        "   يتحقق من أمان نماذج البطاقة\n\n"
+        "5️⃣ **الذكاء الاصطناعي**\n"
+        "   يحلل النتائج ويعطي توصيات\n"
+        f"{get_copyright_footer()}",
+        reply_markup=get_back_keyboard(),
+        parse_mode="Markdown"
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "scan_types")
+async def cb_scan_types(callback: CallbackQuery):
+    await callback.message.edit_text(
+        "⚙️ **الفحوصات المتاحة**\n\n"
+        "🔒 SSL/HTTPS\n"
+        "🛡️ Security Headers\n"
+        "🔑 Stripe & PayPal Keys\n"
+        "💳 نماذج الدفع\n"
+        "🤖 تحليل الذكاء الاصطناعي\n"
+        f"{get_copyright_footer()}",
+        reply_markup=get_back_keyboard(),
+        parse_mode="Markdown"
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "about")
+async def cb_about(callback: CallbackQuery):
+    await callback.message.edit_text(
+        "ℹ️ **عن البوت**\n\n"
+        f"🔖 الإصدار: {DEVELOPER['version']}\n"
+        "🐍 Python 3.11\n"
+        "🤖 Aiogram 3.3\n"
+        "🧠 GPT-4o\n\n"
+        f"👨‍💻 تطوير: {DEVELOPER['name']}\n"
+        f"{get_copyright_footer()}",
+        reply_markup=get_back_keyboard(),
+        parse_mode="Markdown"
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "developer_info")
+async def cb_developer_info(callback: CallbackQuery):
+    await callback.message.edit_text(
+        "👨‍💻 **معلومات المطور**\n\n"
+        f"**الاسم:** {DEVELOPER['name']}\n"
+        "**التخصص:** بوتات تيليغرام وأمن المواقع\n\n"
+        "🛠️ **الخدمات:**\n"
+        "  • تطوير بوتات تيليغرام\n"
+        "  • فحص أمان المواقع\n"
+        "  • حماية بوابات الدفع\n\n"
+        f"📱 {DEVELOPER['username']}\n"
+        f"📢 {DEVELOPER['channel']}\n"
+        f"{get_copyright_footer()}",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="📱 تواصل",
+                    url=f"https://t.me/{DEVELOPER['username'].replace('@', '')}"
+                ),
+                InlineKeyboardButton(
+                    text="📢 القناة",
+                    url=f"https://t.me/{DEVELOPER['channel'].replace('@', '')}"
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🔙 رجوع",
+                    callback_data="main_menu"
+                )
+            ],
+        ]),
+        parse_mode="Markdown"
+    )
+    await callback.answer()
+
+
+# ══════════════════════════════════════
+#       تشغيل البوت
+# ══════════════════════════════════════
+async def main():
+    logger.info(
+        f"🚀 البوت يعمل | "
+        f"المطور: {DEVELOPER['name']} | "
+        f"الإصدار: {DEVELOPER['version']}"
+    )
+    await dp.start_polling(
+        bot,
+        allowed_updates=dp.resolve_used_update_types()
+    )
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
