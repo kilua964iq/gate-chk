@@ -6,10 +6,9 @@ load_dotenv()
 # ══════════════════════════════════════
 #        إعدادات البوت الأساسية
 # ══════════════════════════════════════
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8570527957:AAGT5Kvu-I6izg8dWsvyVbOSVEL6ejTwZZQ")
-ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "1013384909").split(",")]
-
-# ══════════════════════════════════════
+# التوكن يُقرأ من البيئة فقط - بدون قيمة افتراضية!
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "0").split(",")]# ══════════════════════════════════════
 #        إعدادات الفحص
 # ══════════════════════════════════════
 SCAN_TIMEOUT = 10          # ثواني
