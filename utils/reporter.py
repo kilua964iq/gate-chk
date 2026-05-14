@@ -27,21 +27,20 @@ class ReportGenerator:
         score_bar = self._build_score_bar(score)
 
         return (
-            f"╔══════════════════════════════╗\n"
-            f"║   🔍 تقرير فحص الأمان الشامل   ║\n"
-            f"╚══════════════════════════════╝\n\n"
+            "╔══════════════════════════════╗\n"
+            "║   🔍 تقرير فحص الأمان الشامل   ║\n"
+            "╚══════════════════════════════╝\n\n"
             f"🌐 **الموقع:** `{self.results.get('url', 'N/A')}`\n"
             f"🏷️ **النطاق:** `{self.results.get('domain', 'N/A')}`\n"
             f"🕐 **وقت الفحص:** `{self.results.get('scan_time', 'N/A')}`\n\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             f"📊 **درجة الأمان:** {score}/100\n"
             f"{score_bar}\n"
             f"⚠️ **مستوى الخطر:** {risk_badges.get(risk, risk)}\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
         )
 
     def _build_score_bar(self, score: int) -> str:
-        """بناء شريط مرئي لدرجة الأمان"""
         filled = int(score / 10)
         empty = 10 - filled
         bar = "█" * filled + "░" * empty
@@ -64,14 +63,13 @@ class ReportGenerator:
             lines.append("  ❌ الموقع لا يستخدم HTTPS")
 
         if ssl_info.get("valid"):
-            lines.append(f"  ✅ الشهادة صالحة")
+            lines.append("  ✅ الشهادة صالحة")
 
         if ssl_info.get("expiry_date"):
             days = ssl_info.get("days_remaining", 0)
             emoji = "✅" if days > 30 else "⚠️" if days > 0 else "❌"
             lines.append(
-                f"  {emoji} تنتهي في: `{ssl_info['expiry_date']}` "
-                f"({days} يوم)"
+                f"  {emoji} تنتهي في: `{ssl_info['expiry_date']}` ({days} يوم)"
             )
 
         if ssl_info.get("issuer"):
@@ -145,14 +143,13 @@ class ReportGenerator:
             return "🔑 **المفاتيح المكشوفة**\n  ✅ لم يتم اكتشاف مفاتيح مكشوفة\n\n"
 
         lines = [
-            f"🔑 **المفاتيح المكشوفة** — "
-            f"🔴 تحذير: {len(keys)} مفتاح مكشوف!\n"
+            f"🔑 **المفاتيح المكشوفة** — 🔴 تحذير: {len(keys)} مفتاح مكشوف!\n"
         ]
 
         for i, key in enumerate(keys, 1):
             lines.append(
                 f"  {i}. 🔴 **{key['type']}**\n"
-                f"     📍 الصفحة: `{key['page'][:60]}...`\n"
+                f"     📍 الصفحة: `{key['page'][:60]}`\n"
                 f"     🔑 المفتاح: `{key['value_masked']}`\n"
             )
 
@@ -184,8 +181,148 @@ class ReportGenerator:
                 continue
 
             status = "✅" if not form.get("issues") else "⚠️"
-            lines.append(
-                f"  {i}. {status} النموذج {i}\n"
-                f"     • Action: `{form.get('action', 'N/A')[:50]}`\n"
-                f"
+            action = form.get("action", "N/A")[:50]
+            method = form.get("method", "N/A")
 
+            lines.append(f"  {i}. {status} النموذج {i}")
+            lines.append(f"     • Action: `{action}`")
+            lines.append(f"     • Method: `{method}`")
+
+            for issue in form.get("issues", []):
+                lines.append(f"     {issue}")
+
+        return "\n".join(lines) + "\n\n"
+
+    # ══════════════════════════════════════
+    #       قسم التوصيات
+    # ══════════════════════════════════════
+
+    def _build_recommendations_section(self) -> str:
+        lines = ["💡 **التوصيات والحلول**\n"]
+
+        ssl_info = self.results.get("ssl_info", {})
+        headers = self.results.get("security_headers", {})
+        keys = self.results.get("exposed_keys", [])
+        forms = self.results.get("payment_forms", [])
+
+        rec_num = 1
+
+        # توصيات SSL
+        if not ssl_info.get("has_ssl"):
+            lines.append(
+                f"  {rec_num}. 🔒 **تفعيل HTTPS**\n"
+                "     احصل على شهادة SSL مجانية من Let's Encrypt\n"
+                "     الرابط: https://letsencrypt.org\n"
+            )
+            rec_num += 1
+
+        days = ssl_info.get("days_remaining", 999)
+        if 0 < days < 30:
+            lines.append(
+                f"  {rec_num}. 🔄 **تجديد شهادة SSL**\n"
+                f"     الشهادة ستنتهي خلال {days} يوم، جددها الآن\n"
+            )
+            rec_num += 1
+
+        # توصيات Headers
+        missing_headers = [
+            h for h, info in headers.items()
+            if isinstance(info, dict) and not info.get("present")
+        ]
+
+        if missing_headers:
+            lines.append(
+                f"  {rec_num}. 🛡️ **إضافة Security Headers**\n"
+                "     أضف هذا في إعدادات السيرفر (Nginx):\n"
+                "```\n"
+                "add_header Strict-Transport-Security \"max-age=31536000\";\n"
+                "add_header X-Frame-Options \"DENY\";\n"
+                "add_header X-Content-Type-Options \"nosniff\";\n"
+                "add_header X-XSS-Protection \"1; mode=block\";\n"
+                "```\n"
+            )
+            rec_num += 1
+
+        # توصيات المفاتيح
+        if keys:
+            lines.append(
+                f"  {rec_num}. 🔑 **إخفاء المفاتيح السرية**\n"
+                "     • احذف المفاتيح من الكود فوراً\n"
+                "     • استخدم متغيرات البيئة:\n"
+                "```\n"
+                "STRIPE_KEY=sk_live_xxxx\n"
+                "```\n"
+                "     • في الكود:\n"
+                "```python\n"
+                "import os\n"
+                "stripe_key = os.getenv('STRIPE_KEY')\n"
+                "```\n"
+            )
+            rec_num += 1
+
+        # توصيات النماذج
+        has_form_issues = any(
+            form.get("issues") for form in forms if isinstance(form, dict)
+        )
+        if has_form_issues:
+            lines.append(
+                f"  {rec_num}. 💳 **تأمين نماذج الدفع**\n"
+                "     • استخدم POST بدلاً من GET\n"
+                "     • أضف CSRF Token لكل نموذج\n"
+                "     • تأكد أن Action يبدأ بـ https://\n"
+            )
+            rec_num += 1
+
+        if rec_num == 1:
+            lines.append("  ✅ لا توجد توصيات إضافية، الموقع آمن!\n")
+
+        return "\n".join(lines) + "\n"
+
+    # ══════════════════════════════════════
+    #       التذييل
+    # ══════════════════════════════════════
+
+    def _build_footer(self) -> str:
+        return (
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "🤖 **تم الفحص بواسطة Security Scanner Bot**\n"
+            "⚠️ هذا الفحص للأغراض الدفاعية فقط\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        )
+
+    # ══════════════════════════════════════
+    #       توليد التقرير الكامل
+    # ══════════════════════════════════════
+
+    def generate_full_report(self) -> str:
+        report = ""
+        report += self._build_header()
+        report += self._build_ssl_section()
+        report += self._build_headers_section()
+        report += self._build_exposed_keys_section()
+        report += self._build_payment_forms_section()
+        report += self._build_recommendations_section()
+        report += self._build_footer()
+        return report
+
+    def generate_short_report(self) -> str:
+        score = self.results.get("score", 0)
+        risk = self.results.get("risk_level", "UNKNOWN")
+        keys_count = len(self.results.get("exposed_keys", []))
+        ssl_ok = self.results.get("ssl_info", {}).get("valid", False)
+
+        risk_badges = {
+            "CRITICAL": "🔴 خطر حرج",
+            "HIGH":     "🟠 خطر عالي",
+            "MEDIUM":   "🟡 خطر متوسط",
+            "LOW":      "🟢 آمن نسبياً",
+        }
+
+        return (
+            f"📊 **ملخص الفحص**\n\n"
+            f"🌐 `{self.results.get('url', 'N/A')}`\n"
+            f"📈 الدرجة: **{score}/100**\n"
+            f"⚠️ الخطر: {risk_badges.get(risk, risk)}\n"
+            f"🔒 SSL: {'✅' if ssl_ok else '❌'}\n"
+            f"🔑 مفاتيح مكشوفة: {'🔴 ' + str(keys_count) if keys_count else '✅ لا يوجد'}\n"
+        )
