@@ -11,11 +11,11 @@ if not BOT_TOKEN:
 
 DEVELOPER = {
     "name":    "Mustafa",
-    "username": "@your_username",
-    "version":  "1",
- 
+    "username": "@o8380",
+    "channel":  "@Mustafa964iq",
+    "version":  "1.0.0",
+    "rights":   "جميع الحقوق محفوظة © 2026",
 }
-
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 AI_MODEL       = "gpt-4o"
 AI_MAX_TOKENS  = 2000
