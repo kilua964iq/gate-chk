@@ -6,3 +6,4 @@ python-dotenv==1.0.0
 lxml==4.9.3
 colorama==0.4.6
 openai==1.6.1
+httpx==0.24.1
