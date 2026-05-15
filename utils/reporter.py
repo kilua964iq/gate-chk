@@ -2,19 +2,18 @@ from config import SEVERITY_EMOJI
 
 
 class ReportGenerator:
-    """
-    مولّد تقارير احترافي لنتائج الفحص
-    """
 
     def __init__(self, scan_results: dict):
         self.results = scan_results
 
-    # ══════════════════════════════════════
-    #       الرأس والمعلومات العامة
-    # ══════════════════════════════════════
+    def _build_score_bar(self, score: int) -> str:
+        filled = int(score / 10)
+        empty  = 10 - filled
+        bar    = "█" * filled + "░" * empty
+        return f"`[{bar}]` {score}%"
 
     def _build_header(self) -> str:
-        risk = self.results.get("risk_level", "UNKNOWN")
+        risk  = self.results.get("risk_level", "UNKNOWN")
         score = self.results.get("score", 0)
 
         risk_badges = {
@@ -23,8 +22,6 @@ class ReportGenerator:
             "MEDIUM":   "🟡 خطر متوسط",
             "LOW":      "🟢 آمن نسبياً",
         }
-
-        score_bar = self._build_score_bar(score)
 
         return (
             "╔══════════════════════════════╗\n"
@@ -35,20 +32,10 @@ class ReportGenerator:
             f"🕐 **وقت الفحص:** `{self.results.get('scan_time', 'N/A')}`\n\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             f"📊 **درجة الأمان:** {score}/100\n"
-            f"{score_bar}\n"
+            f"{self._build_score_bar(score)}\n"
             f"⚠️ **مستوى الخطر:** {risk_badges.get(risk, risk)}\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
         )
-
-    def _build_score_bar(self, score: int) -> str:
-        filled = int(score / 10)
-        empty = 10 - filled
-        bar = "█" * filled + "░" * empty
-        return f"`[{bar}]` {score}%"
-
-    # ══════════════════════════════════════
-    #       قسم SSL
-    # ══════════════════════════════════════
 
     def _build_ssl_section(self) -> str:
         ssl_info = self.results.get("ssl_info", {})
@@ -66,10 +53,11 @@ class ReportGenerator:
             lines.append("  ✅ الشهادة صالحة")
 
         if ssl_info.get("expiry_date"):
-            days = ssl_info.get("days_remaining", 0)
+            days  = ssl_info.get("days_remaining", 0)
             emoji = "✅" if days > 30 else "⚠️" if days > 0 else "❌"
             lines.append(
-                f"  {emoji} تنتهي في: `{ssl_info['expiry_date']}` ({days} يوم)"
+                f"  {emoji} تنتهي في: `{ssl_info['expiry_date']}` "
+                f"({days} يوم)"
             )
 
         if ssl_info.get("issuer"):
@@ -83,21 +71,16 @@ class ReportGenerator:
 
         return "\n".join(lines) + "\n\n"
 
-    # ══════════════════════════════════════
-    #       قسم Security Headers
-    # ══════════════════════════════════════
-
     def _build_headers_section(self) -> str:
         headers = self.results.get("security_headers", {})
         if not headers or "error" in headers:
             error = headers.get("error", "خطأ غير معروف")
             return f"🛡️ **Security Headers**\n  ⚠️ {error}\n\n"
 
-        lines = ["🛡️ **فحص Security Headers**\n"]
-
-        missing_high = []
+        lines          = ["🛡️ **فحص Security Headers**\n"]
+        missing_high   = []
         missing_medium = []
-        missing_low = []
+        missing_low    = []
         present_headers = []
 
         for header, info in headers.items():
@@ -106,7 +89,10 @@ class ReportGenerator:
                     present_headers.append(f"  ✅ `{header}`")
                 else:
                     severity = info.get("severity", "LOW")
-                    entry = f"  ❌ `{header}` — {info.get('description', '')}"
+                    entry = (
+                        f"  ❌ `{header}` — "
+                        f"{info.get('description', '')}"
+                    )
                     if severity == "HIGH":
                         missing_high.append(entry)
                     elif severity == "MEDIUM":
@@ -132,48 +118,50 @@ class ReportGenerator:
 
         return "\n".join(lines) + "\n\n"
 
-    # ══════════════════════════════════════
-    #       قسم المفاتيح المكشوفة
-    # ══════════════════════════════════════
-
     def _build_exposed_keys_section(self) -> str:
         keys = self.results.get("exposed_keys", [])
 
         if not keys:
-            return "🔑 **المفاتيح المكشوفة**\n  ✅ لم يتم اكتشاف مفاتيح مكشوفة\n\n"
+            return (
+                "🔑 **المفاتيح المكشوفة**\n"
+                "  ✅ لم يتم اكتشاف مفاتيح مكشوفة\n\n"
+            )
 
         lines = [
-            f"🔑 **المفاتيح المكشوفة** — 🔴 تحذير: {len(keys)} مفتاح مكشوف!\n"
+            f"🔑 **المفاتيح المكشوفة** — "
+            f"🔴 تحذير: {len(keys)} مفتاح مكشوف!\n"
         ]
 
         for i, key in enumerate(keys, 1):
             lines.append(
                 f"  {i}. 🔴 **{key['type']}**\n"
                 f"     📍 الصفحة: `{key['page'][:60]}`\n"
-                f"     🔑 المفتاح: `{key['value_masked']}`\n"
+                f"     🔑 المفتاح الكامل: `{key['value_full']}`\n"
             )
 
         lines.append(
             "  ⚡ **الإجراء الفوري المطلوب:**\n"
             "  • أوقف استخدام هذه المفاتيح فوراً\n"
             "  • أنشئ مفاتيح جديدة من لوحة التحكم\n"
-            "  • لا تضع المفاتيح في كود Frontend أبداً\n"
-            "  • استخدم متغيرات البيئة Environment Variables\n"
+            "  • لا تضع المفاتيح في كود Frontend\n"
+            "  • استخدم متغيرات البيئة\n"
         )
 
         return "\n".join(lines) + "\n"
-
-    # ══════════════════════════════════════
-    #       قسم نماذج الدفع
-    # ══════════════════════════════════════
 
     def _build_payment_forms_section(self) -> str:
         forms = self.results.get("payment_forms", [])
 
         if not forms:
-            return "💳 **نماذج الدفع**\n  ℹ️ لم يتم العثور على نماذج دفع\n\n"
+            return (
+                "💳 **نماذج الدفع**\n"
+                "  ℹ️ لم يتم العثور على نماذج دفع\n\n"
+            )
 
-        lines = [f"💳 **نماذج الدفع** — تم العثور على {len(forms)} نموذج\n"]
+        lines = [
+            f"💳 **نماذج الدفع** — "
+            f"تم العثور على {len(forms)} نموذج\n"
+        ]
 
         for i, form in enumerate(forms, 1):
             if "error" in form:
@@ -193,26 +181,19 @@ class ReportGenerator:
 
         return "\n".join(lines) + "\n\n"
 
-    # ══════════════════════════════════════
-    #       قسم التوصيات
-    # ══════════════════════════════════════
-
     def _build_recommendations_section(self) -> str:
-        lines = ["💡 **التوصيات والحلول**\n"]
-
+        lines   = ["💡 **التوصيات والحلول**\n"]
         ssl_info = self.results.get("ssl_info", {})
-        headers = self.results.get("security_headers", {})
-        keys = self.results.get("exposed_keys", [])
-        forms = self.results.get("payment_forms", [])
+        headers  = self.results.get("security_headers", {})
+        keys     = self.results.get("exposed_keys", [])
+        forms    = self.results.get("payment_forms", [])
+        rec_num  = 1
 
-        rec_num = 1
-
-        # توصيات SSL
         if not ssl_info.get("has_ssl"):
             lines.append(
                 f"  {rec_num}. 🔒 **تفعيل HTTPS**\n"
-                "     احصل على شهادة SSL مجانية من Let's Encrypt\n"
-                "     الرابط: https://letsencrypt.org\n"
+                "     احصل على شهادة SSL من Let's Encrypt\n"
+                "     https://letsencrypt.org\n"
             )
             rec_num += 1
 
@@ -220,11 +201,10 @@ class ReportGenerator:
         if 0 < days < 30:
             lines.append(
                 f"  {rec_num}. 🔄 **تجديد شهادة SSL**\n"
-                f"     الشهادة ستنتهي خلال {days} يوم، جددها الآن\n"
+                f"     الشهادة ستنتهي خلال {days} يوم\n"
             )
             rec_num += 1
 
-        # توصيات Headers
         missing_headers = [
             h for h, info in headers.items()
             if isinstance(info, dict) and not info.get("present")
@@ -233,9 +213,10 @@ class ReportGenerator:
         if missing_headers:
             lines.append(
                 f"  {rec_num}. 🛡️ **إضافة Security Headers**\n"
-                "     أضف هذا في إعدادات السيرفر (Nginx):\n"
+                "     أضف في إعدادات Nginx:\n"
                 "```\n"
-                "add_header Strict-Transport-Security \"max-age=31536000\";\n"
+                "add_header Strict-Transport-Security "
+                "\"max-age=31536000\";\n"
                 "add_header X-Frame-Options \"DENY\";\n"
                 "add_header X-Content-Type-Options \"nosniff\";\n"
                 "add_header X-XSS-Protection \"1; mode=block\";\n"
@@ -243,16 +224,11 @@ class ReportGenerator:
             )
             rec_num += 1
 
-        # توصيات المفاتيح
         if keys:
             lines.append(
                 f"  {rec_num}. 🔑 **إخفاء المفاتيح السرية**\n"
                 "     • احذف المفاتيح من الكود فوراً\n"
                 "     • استخدم متغيرات البيئة:\n"
-                "```\n"
-                "STRIPE_KEY=sk_live_xxxx\n"
-                "```\n"
-                "     • في الكود:\n"
                 "```python\n"
                 "import os\n"
                 "stripe_key = os.getenv('STRIPE_KEY')\n"
@@ -260,27 +236,24 @@ class ReportGenerator:
             )
             rec_num += 1
 
-        # توصيات النماذج
         has_form_issues = any(
-            form.get("issues") for form in forms if isinstance(form, dict)
+            form.get("issues")
+            for form in forms
+            if isinstance(form, dict)
         )
         if has_form_issues:
             lines.append(
                 f"  {rec_num}. 💳 **تأمين نماذج الدفع**\n"
                 "     • استخدم POST بدلاً من GET\n"
-                "     • أضف CSRF Token لكل نموذج\n"
+                "     • أضف CSRF Token\n"
                 "     • تأكد أن Action يبدأ بـ https://\n"
             )
             rec_num += 1
 
         if rec_num == 1:
-            lines.append("  ✅ لا توجد توصيات إضافية، الموقع آمن!\n")
+            lines.append("  ✅ لا توجد توصيات، الموقع آمن!\n")
 
         return "\n".join(lines) + "\n"
-
-    # ══════════════════════════════════════
-    #       التذييل
-    # ══════════════════════════════════════
 
     def _build_footer(self) -> str:
         return (
@@ -290,12 +263,8 @@ class ReportGenerator:
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         )
 
-    # ══════════════════════════════════════
-    #       توليد التقرير الكامل
-    # ══════════════════════════════════════
-
     def generate_full_report(self) -> str:
-        report = ""
+        report  = ""
         report += self._build_header()
         report += self._build_ssl_section()
         report += self._build_headers_section()
@@ -306,10 +275,10 @@ class ReportGenerator:
         return report
 
     def generate_short_report(self) -> str:
-        score = self.results.get("score", 0)
-        risk = self.results.get("risk_level", "UNKNOWN")
+        score     = self.results.get("score", 0)
+        risk      = self.results.get("risk_level", "UNKNOWN")
         keys_count = len(self.results.get("exposed_keys", []))
-        ssl_ok = self.results.get("ssl_info", {}).get("valid", False)
+        ssl_ok    = self.results.get("ssl_info", {}).get("valid", False)
 
         risk_badges = {
             "CRITICAL": "🔴 خطر حرج",
@@ -324,5 +293,6 @@ class ReportGenerator:
             f"📈 الدرجة: **{score}/100**\n"
             f"⚠️ الخطر: {risk_badges.get(risk, risk)}\n"
             f"🔒 SSL: {'✅' if ssl_ok else '❌'}\n"
-            f"🔑 مفاتيح مكشوفة: {'🔴 ' + str(keys_count) if keys_count else '✅ لا يوجد'}\n"
+            f"🔑 مفاتيح مكشوفة: "
+            f"{'🔴 ' + str(keys_count) if keys_count else '✅ لا يوجد'}\n"
         )
