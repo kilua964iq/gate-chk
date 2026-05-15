@@ -1,8 +1,6 @@
 import re
 import ssl
 import socket
-import asyncio
-import aiohttp
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
@@ -30,7 +28,7 @@ class PaymentScanner:
             "scan_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "ssl_info": {},
             "security_headers": {},
-            "exposed_keys": [],      # سيحتوي على المفاتيح الكاملة
+            "exposed_keys": [],
             "payment_forms": [],
             "vulnerabilities": [],
             "score": 100,
@@ -46,23 +44,13 @@ class PaymentScanner:
             "Accept-Language": "en-US,en;q=0.5",
         }
 
-    # ══════════════════════════════════════
-    #           الدوال المساعدة
-    # ══════════════════════════════════════
-
     def _normalize_url(self, url: str) -> str:
-        """تطبيع الرابط وإضافة البروتوكول إن لزم"""
         url = url.strip()
         if not url.startswith(("http://", "https://")):
             url = "https://" + url
         return url.rstrip("/")
 
-    def _get_full_key(self, key: str) -> str:
-        """إرجاع المفتاح كاملاً دون إخفاء"""
-        return key
-
     def _deduct_score(self, points: int):
-        """خصم نقاط من درجة الأمان"""
         self.results["score"] = max(0, self.results["score"] - points)
 
     # ══════════════════════════════════════
@@ -70,7 +58,6 @@ class PaymentScanner:
     # ══════════════════════════════════════
 
     def scan_ssl(self) -> dict:
-        """فحص شهادة SSL بالتفصيل"""
         ssl_info = {
             "has_ssl": False,
             "valid": False,
@@ -82,7 +69,6 @@ class PaymentScanner:
         }
 
         try:
-            # فحص وجود HTTPS
             if self.target_url.startswith("https://"):
                 ssl_info["has_ssl"] = True
             else:
@@ -91,7 +77,6 @@ class PaymentScanner:
                 self.results["ssl_info"] = ssl_info
                 return ssl_info
 
-            # جلب تفاصيل الشهادة
             context = ssl.create_default_context()
             with socket.create_connection(
                 (self.domain, 443), timeout=SCAN_TIMEOUT
@@ -100,7 +85,6 @@ class PaymentScanner:
                     cert = ssock.getpeercert()
                     ssl_info["version"] = ssock.version()
 
-                    # تاريخ الانتهاء
                     expiry_str = cert.get("notAfter", "")
                     if expiry_str:
                         expiry_date = datetime.strptime(
@@ -120,7 +104,6 @@ class PaymentScanner:
                             )
                             self._deduct_score(15)
 
-                    # المُصدر
                     issuer_data = dict(x[0] for x in cert.get("issuer", []))
                     ssl_info["issuer"] = issuer_data.get("organizationName", "غير معروف")
 
@@ -128,14 +111,11 @@ class PaymentScanner:
             ssl_info["issues"].append("❌ شهادة SSL غير موثوقة أو منتهية")
             ssl_info["valid"] = False
             self._deduct_score(35)
-
         except ssl.SSLError as e:
             ssl_info["issues"].append(f"❌ خطأ SSL: {str(e)[:50]}")
             self._deduct_score(25)
-
         except (socket.timeout, ConnectionRefusedError):
             ssl_info["issues"].append("⚠️ تعذر الاتصال للتحقق من SSL")
-
         except Exception as e:
             ssl_info["issues"].append(f"خطأ أثناء فحص SSL: {str(e)[:50]}")
 
@@ -147,7 +127,6 @@ class PaymentScanner:
     # ══════════════════════════════════════
 
     def scan_security_headers(self) -> dict:
-        """فحص رؤوس الأمان HTTP"""
         headers_result = {}
 
         try:
@@ -176,7 +155,6 @@ class PaymentScanner:
                         "severity": info["severity"],
                         "description": info["description"],
                     }
-                    # خصم نقاط حسب الخطورة
                     deductions = {"HIGH": 10, "MEDIUM": 5, "LOW": 2}
                     self._deduct_score(deductions.get(info["severity"], 2))
 
@@ -193,17 +171,15 @@ class PaymentScanner:
         return headers_result
 
     # ══════════════════════════════════════
-    #       فحص المفاتيح المكشوفة (كاملة)
+    #       فحص المفاتيح المكشوفة
     # ══════════════════════════════════════
 
     def scan_exposed_keys(self) -> list:
-        """فحص المفاتيح المكشوفة في صفحات الموقع - إظهارها كاملة"""
         exposed = []
         pages_to_scan = [self.target_url]
         scanned_pages = set()
 
         try:
-            # جلب روابط إضافية من الصفحة الرئيسية
             response = requests.get(
                 self.target_url,
                 headers=self.headers,
@@ -212,7 +188,6 @@ class PaymentScanner:
             )
             soup = BeautifulSoup(response.text, "lxml")
 
-            # إضافة روابط JS وصفحات الدفع
             for tag in soup.find_all(["script", "a"], href=True):
                 href = tag.get("href") or tag.get("src", "")
                 if href:
@@ -220,7 +195,6 @@ class PaymentScanner:
                     if self.domain in full_url:
                         pages_to_scan.append(full_url)
 
-            # إضافة مسارات شائعة
             common_paths = [
                 "/checkout", "/payment", "/cart",
                 "/wp-content/themes/", "/assets/js/",
@@ -232,7 +206,6 @@ class PaymentScanner:
         except Exception:
             pass
 
-        # فحص الصفحات
         for page_url in pages_to_scan[:MAX_PAGES_SCAN]:
             if page_url in scanned_pages:
                 continue
@@ -247,7 +220,6 @@ class PaymentScanner:
                 )
                 content = resp.text
 
-                # البحث عن المفاتيح - تخزينها كاملة
                 for key_type, patterns in PAYMENT_KEY_PATTERNS.items():
                     for pattern in patterns:
                         matches = re.findall(pattern, content, re.IGNORECASE)
@@ -256,7 +228,7 @@ class PaymentScanner:
                             if len(key_value) > 10:
                                 exposed.append({
                                     "type": key_type,
-                                    "value_full": key_value,      # 🔓 المفتاح كاملاً
+                                    "value": key_value,  # ✅ المفتاح كاملاً
                                     "page": page_url,
                                     "severity": "CRITICAL",
                                 })
@@ -268,11 +240,10 @@ class PaymentScanner:
             except Exception:
                 continue
 
-        # إزالة التكرارات
         seen = set()
         unique_exposed = []
         for item in exposed:
-            key = f"{item['type']}_{item['page']}_{item['value_full']}"
+            key = f"{item['type']}_{item['page']}_{item['value']}"
             if key not in seen:
                 seen.add(key)
                 unique_exposed.append(item)
@@ -285,7 +256,6 @@ class PaymentScanner:
     # ══════════════════════════════════════
 
     def scan_payment_forms(self) -> list:
-        """فحص نماذج الدفع وأمانها"""
         payment_forms = []
 
         try:
@@ -319,26 +289,19 @@ class PaymentScanner:
                     if action.startswith("https://"):
                         form_info["has_https"] = True
                     elif action.startswith("http://"):
-                        form_info["issues"].append(
-                            "❌ نموذج الدفع يرسل البيانات عبر HTTP غير مشفر"
-                        )
+                        form_info["issues"].append("❌ نموذج الدفع يرسل البيانات عبر HTTP غير مشفر")
                         self._deduct_score(40)
 
                     if form_info["method"] == "GET":
-                        form_info["issues"].append(
-                            "⚠️ نموذج الدفع يستخدم GET بدلاً من POST"
-                        )
+                        form_info["issues"].append("⚠️ نموذج الدفع يستخدم GET بدلاً من POST")
                         self._deduct_score(20)
 
-                    # فحص CSRF token
                     csrf_fields = form.find_all(
                         "input",
                         attrs={"name": re.compile(r"csrf|token|_token", re.I)}
                     )
                     if not csrf_fields:
-                        form_info["issues"].append(
-                            "⚠️ لا يوجد CSRF Token في نموذج الدفع"
-                        )
+                        form_info["issues"].append("⚠️ لا يوجد CSRF Token في نموذج الدفع")
                         self._deduct_score(15)
 
                     payment_forms.append(form_info)
@@ -349,12 +312,7 @@ class PaymentScanner:
         self.results["payment_forms"] = payment_forms
         return payment_forms
 
-    # ══════════════════════════════════════
-    #       تحديد مستوى الخطر
-    # ══════════════════════════════════════
-
     def _calculate_risk_level(self):
-        """حساب مستوى الخطر الإجمالي"""
         score = self.results["score"]
         if score >= 80:
             self.results["risk_level"] = "LOW"
@@ -366,53 +324,53 @@ class PaymentScanner:
             self.results["risk_level"] = "CRITICAL"
 
     # ══════════════════════════════════════
-    #       دالة لتوليد التقرير الكامل
+    #       توليد التقرير
     # ══════════════════════════════════════
 
     def generate_full_report(self) -> str:
         """توليد تقرير كامل مع المفاتيح مكشوفة بالكامل"""
-        report = []
-        report.append("╔══════════════════════════════╗")
-        report.append("║   🔍 تقرير فحص الأمان الشامل   ║")
-        report.append("╚══════════════════════════════╝")
-        report.append("")
-        report.append(f"🌐 الموقع: {self.results['url']}")
-        report.append(f"🏷️ النطاق: {self.results['domain']}")
-        report.append(f"🕐 وقت الفحص: {self.results['scan_time']}")
-        report.append("")
-        report.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        report.append(f"📊 درجة الأمان: {self.results['score']}/100")
+        report_lines = []
+        report_lines.append("╔══════════════════════════════╗")
+        report_lines.append("║   🔍 تقرير فحص الأمان الشامل   ║")
+        report_lines.append("╚══════════════════════════════╝")
+        report_lines.append("")
+        report_lines.append(f"🌐 الموقع: {self.results['url']}")
+        report_lines.append(f"🏷️ النطاق: {self.results['domain']}")
+        report_lines.append(f"🕐 وقت الفحص: {self.results['scan_time']}")
+        report_lines.append("")
+        report_lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        report_lines.append(f"📊 درجة الأمان: {self.results['score']}/100")
         bar_length = 20
         filled = int(bar_length * self.results['score'] / 100)
         bar = "█" * filled + "░" * (bar_length - filled)
-        report.append(f"[{bar}] {self.results['score']}%")
+        report_lines.append(f"[{bar}] {self.results['score']}%")
         
         risk_icons = {"LOW": "🟢 منخفض", "MEDIUM": "🟡 متوسط", "HIGH": "🟠 مرتفع", "CRITICAL": "🔴 خطر حرج"}
-        report.append(f"⚠️ مستوى الخطر: {risk_icons.get(self.results['risk_level'], 'غير معروف')}")
-        report.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        report.append("")
+        report_lines.append(f"⚠️ مستوى الخطر: {risk_icons.get(self.results['risk_level'], 'غير معروف')}")
+        report_lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        report_lines.append("")
         
         # SSL Info
         ssl_info = self.results.get("ssl_info", {})
-        report.append("🔒 فحص SSL/HTTPS")
-        report.append("")
-        report.append(f"  {'✅' if ssl_info.get('has_ssl') else '❌'} الموقع {'يستخدم' if ssl_info.get('has_ssl') else 'لا يستخدم'} HTTPS")
+        report_lines.append("🔒 فحص SSL/HTTPS")
+        report_lines.append("")
+        report_lines.append(f"  {'✅' if ssl_info.get('has_ssl') else '❌'} الموقع {'يستخدم' if ssl_info.get('has_ssl') else 'لا يستخدم'} HTTPS")
         if ssl_info.get('has_ssl'):
-            report.append(f"  {'✅' if ssl_info.get('valid') else '❌'} الشهادة {'صالحة' if ssl_info.get('valid') else 'غير صالحة'}")
+            report_lines.append(f"  {'✅' if ssl_info.get('valid') else '❌'} الشهادة {'صالحة' if ssl_info.get('valid') else 'غير صالحة'}")
             if ssl_info.get('expiry_date'):
-                report.append(f"  📅 تنتهي في: {ssl_info['expiry_date']} ({ssl_info.get('days_remaining', '?')} يوم)")
+                report_lines.append(f"  📅 تنتهي في: {ssl_info['expiry_date']} ({ssl_info.get('days_remaining', '?')} يوم)")
             if ssl_info.get('issuer'):
-                report.append(f"  🏢 المُصدر: {ssl_info['issuer']}")
+                report_lines.append(f"  🏢 المُصدر: {ssl_info['issuer']}")
             if ssl_info.get('version'):
-                report.append(f"  🔐 الإصدار: {ssl_info['version']}")
+                report_lines.append(f"  🔐 الإصدار: {ssl_info['version']}")
         for issue in ssl_info.get('issues', []):
-            report.append(f"  {issue}")
-        report.append("")
+            report_lines.append(f"  {issue}")
+        report_lines.append("")
         
         # Security Headers
         headers_info = self.results.get("security_headers", {})
-        report.append("🛡️ فحص Security Headers")
-        report.append("")
+        report_lines.append("🛡️ فحص Security Headers")
+        report_lines.append("")
         
         present_headers = []
         missing_headers = []
@@ -426,108 +384,106 @@ class PaymentScanner:
                 missing_headers.append(f"  ❌ {header} — {info.get('description', '')[:50]}")
         
         if present_headers:
-            report.append("✅ موجودة:")
-            report.extend(present_headers)
-            report.append("")
+            report_lines.append("✅ موجودة:")
+            report_lines.extend(present_headers)
+            report_lines.append("")
         
         if missing_headers:
-            report.append("🟢 مفقودة:")
-            report.extend(missing_headers)
-            report.append("")
+            report_lines.append("🟢 مفقودة:")
+            report_lines.extend(missing_headers)
+            report_lines.append("")
         
-        # 🔓 Exposed Keys - FULL (كاملاً)
+        # 🔑 Exposed Keys - FULL
         exposed = self.results.get("exposed_keys", [])
         if exposed:
-            report.append("🔑 المفاتيح المكشوفة — 🔴 تحذير: {} مفتاح مكشوف!".format(len(exposed)))
-            report.append("")
+            report_lines.append(f"🔑 المفاتيح المكشوفة — 🔴 تحذير: {len(exposed)} مفتاح مكشوف!")
+            report_lines.append("")
             for i, key_info in enumerate(exposed, 1):
-                report.append(f"  {i}. 🔴 {key_info.get('type', 'مفتاح غير معروف')}")
-                report.append(f"     📍 الصفحة: {key_info.get('page', 'غير معروف')}")
-                report.append(f"     🔑 المفتاح (كاملاً): {key_info.get('value_full', 'غير معروف')}")
-                report.append("")
-            report.append("  ⚡ الإجراء الفوري المطلوب:")
-            report.append("  • أوقف استخدام هذه المفاتيح فوراً")
-            report.append("  • أنشئ مفاتيح جديدة من لوحة التحكم")
-            report.append("  • لا تضع المفاتيح في كود Frontend أبداً")
-            report.append("  • استخدم متغيرات البيئة Environment Variables")
-            report.append("")
+                report_lines.append(f"  {i}. 🔴 {key_info.get('type', 'مفتاح غير معروف')}")
+                report_lines.append(f"     📍 الصفحة: {key_info.get('page', 'غير معروف')}")
+                report_lines.append(f"     🔑 المفتاح: {key_info.get('value', 'غير معروف')}")  # ✅ كاملاً
+                report_lines.append("")
+            report_lines.append("  ⚡ الإجراء الفوري المطلوب:")
+            report_lines.append("  • أوقف استخدام هذه المفاتيح فوراً")
+            report_lines.append("  • أنشئ مفاتيح جديدة من لوحة التحكم")
+            report_lines.append("  • لا تضع المفاتيح في كود Frontend أبداً")
+            report_lines.append("  • استخدم متغيرات البيئة Environment Variables")
+            report_lines.append("")
         else:
-            report.append("🔑 المفاتيح المكشوفة — ✅ لم يتم العثور على مفاتيح مكشوفة")
-            report.append("")
+            report_lines.append("🔑 المفاتيح المكشوفة — ✅ لم يتم العثور على مفاتيح مكشوفة")
+            report_lines.append("")
         
         # Payment Forms
         forms = self.results.get("payment_forms", [])
-        if forms:
-            report.append("💳 نماذج الدفع — تم العثور على {} نموذج".format(len(forms)))
-            report.append("")
+        if forms and not (len(forms) == 1 and "error" in forms[0]):
+            report_lines.append(f"💳 نماذج الدفع — تم العثور على {len(forms)} نموذج")
+            report_lines.append("")
             for i, form in enumerate(forms, 1):
                 if "error" in form:
-                    report.append(f"  {i}. ❌ خطأ: {form['error']}")
+                    report_lines.append(f"  {i}. ❌ خطأ: {form['error']}")
                 else:
-                    report.append(f"  {i}. ⚠️ النموذج {i}")
-                    report.append(f"     • Action: {form.get('action', 'غير محدد')}")
-                    report.append(f"     • Method: {form.get('method', 'GET')}")
+                    report_lines.append(f"  {i}. ⚠️ النموذج {i}")
+                    report_lines.append(f"     • Action: {form.get('action', 'غير محدد')}")
+                    report_lines.append(f"     • Method: {form.get('method', 'GET')}")
                     for issue in form.get('issues', []):
-                        report.append(f"     {issue}")
-                report.append("")
+                        report_lines.append(f"     {issue}")
+                report_lines.append("")
         else:
-            report.append("💳 نماذج الدفع — ✅ لم يتم العثور على نماذج دفع")
-            report.append("")
+            report_lines.append("💳 نماذج الدفع — ✅ لم يتم العثور على نماذج دفع")
+            report_lines.append("")
         
         # Recommendations
-        report.append("💡 التوصيات والحلول")
-        report.append("")
-        report.append("  1. 🛡️ إضافة Security Headers")
-        report.append("     أضف هذا في إعدادات السيرفر (Nginx):")
-        report.append('add_header Strict-Transport-Security "max-age=31536000";')
-        report.append('add_header X-Frame-Options "DENY";')
-        report.append('add_header X-Content-Type-Options "nosniff";')
-        report.append('add_header X-XSS-Protection "1; mode=block";')
-        report.append("")
+        report_lines.append("💡 التوصيات والحلول")
+        report_lines.append("")
+        report_lines.append("  1. 🛡️ إضافة Security Headers")
+        report_lines.append("     أضف هذا في إعدادات السيرفر (Nginx):")
+        report_lines.append('add_header Strict-Transport-Security "max-age=31536000";')
+        report_lines.append('add_header X-Frame-Options "DENY";')
+        report_lines.append('add_header X-Content-Type-Options "nosniff";')
+        report_lines.append('add_header X-XSS-Protection "1; mode=block";')
+        report_lines.append("")
         
         if exposed:
-            report.append("  2. 🔑 إخفاء المفاتيح السرية")
-            report.append("     • احذف المفاتيح من الكود فوراً")
-            report.append("     • استخدم متغيرات البيئة:")
-            report.append("       export STRIPE_KEY=sk_live_xxxx")
-            report.append("")
-            report.append("     • في الكود:")
-            report.append("       import os")
-            report.append("       stripe_key = os.getenv('STRIPE_KEY')")
-            report.append("")
+            report_lines.append("  2. 🔑 إخفاء المفاتيح السرية")
+            report_lines.append("     • احذف المفاتيح من الكود فوراً")
+            report_lines.append("     • استخدم متغيرات البيئة:")
+            report_lines.append("       export STRIPE_KEY=sk_live_xxxx")
+            report_lines.append("")
+            report_lines.append("     • في الكود:")
+            report_lines.append("       import os")
+            report_lines.append("       stripe_key = os.getenv('STRIPE_KEY')")
+            report_lines.append("")
         
         if forms:
-            report.append("  3. 💳 تأمين نماذج الدفع")
-            report.append("     • استخدم POST بدلاً من GET")
-            report.append("     • أضف CSRF Token لكل نموذج")
-            report.append("     • تأكد أن Action يبدأ بـ https://")
-            report.append("")
+            report_lines.append("  3. 💳 تأمين نماذج الدفع")
+            report_lines.append("     • استخدم POST بدلاً من GET")
+            report_lines.append("     • أضف CSRF Token لكل نموذج")
+            report_lines.append("     • تأكد أن Action يبدأ بـ https://")
+            report_lines.append("")
         
-        report.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        report.append("🤖 تم الفحص بواسطة Security Scanner Bot")
-        report.append("⚠️ هذا الفحص للأغراض الدفاعية فقط")
-        report.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        report.append("")
-        report.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        report.append("👨‍💻 المطور: Mustafa")
-        report.append("📱 تواصل: @o8380")
-        report.append("📢 القناة: @Mustafa964iq")
-        report.append("🔖 الإصدار: 2.0.0")
-        report.append("©️ جميع الحقوق محفوظة © 2026")
-        report.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        report_lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        report_lines.append("🤖 تم الفحص بواسطة Security Scanner Bot")
+        report_lines.append("⚠️ هذا الفحص للأغراض الدفاعية فقط")
+        report_lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        report_lines.append("")
+        report_lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        report_lines.append("👨‍💻 المطور: Mustafa")
+        report_lines.append("📱 تواصل: @o8380")
+        report_lines.append("📢 القناة: @Mustafa964iq")
+        report_lines.append("🔖 الإصدار: 2.1.0")
+        report_lines.append("©️ جميع الحقوق محفوظة © 2026")
+        report_lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         
-        return "\n".join(report)
+        return "\n".join(report_lines)
 
     # ══════════════════════════════════════
     #       الفحص الشامل
     # ══════════════════════════════════════
 
     def run_full_scan(self) -> dict:
-        """تشغيل الفحص الكامل"""
         import urllib3
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-        # تشغيل جميع الفحوصات
         self.scan_ssl()
         self.scan_security_headers()
         self.scan_exposed_keys()
@@ -538,8 +494,6 @@ class PaymentScanner:
 
 
 # ════════════════════════════════════════════════════════════
-#   مثال للتشغيل المباشر
-# ════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
     import sys
@@ -549,14 +503,22 @@ if __name__ == "__main__":
         url = input("🔗 أدخل رابط الموقع للفحص: ").strip()
     
     print("\n🚀 بدء الفحص الشامل...\n")
-    scanner = PaymentScanner(url)
-    results = scanner.run_full_scan()
     
-    # طباعة التقرير الكامل
-    report = scanner.generate_full_report()
-    print(report)
-    
-    # حفظ التقرير في ملف
-    with open(f"scan_report_{scanner.domain}.txt", "w", encoding="utf-8") as f:
-        f.write(report)
-    print(f"\n📁 تم حفظ التقرير في: scan_report_{scanner.domain}.txt")
+    try:
+        scanner = PaymentScanner(url)
+        results = scanner.run_full_scan()
+        
+        report = scanner.generate_full_report()
+        print(report)
+        
+        # حفظ التقرير
+        safe_domain = scanner.domain.replace('/', '_').replace(':', '_')
+        filename = f"scan_report_{safe_domain}.txt"
+        with open(filename, "w", encoding="utf-8") as f:
+            f.write(report)
+        print(f"\n📁 تم حفظ التقرير في: {filename}")
+        
+    except Exception as e:
+        print(f"❌ حدث خطأ أثناء الفحص!")
+        print(f"السبب: {str(e)}")
+        print("تأكد من صحة الرابط والمكتبات المثبتة")
